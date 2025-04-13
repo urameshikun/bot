@@ -1,6 +1,7 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
-const fetch = require('node-fetch');
+const vision = require('@google-cloud/vision');
+
 const app = express();
 
 const config = {
@@ -10,6 +11,12 @@ const config = {
 
 const client = new line.Client(config);
 
+// Cloud Visionクライアントを初期化（環境変数からキーを読み込み）
+const visionClient = new vision.ImageAnnotatorClient({
+  credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+});
+
+// webhook受信エンドポイント
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then(() => res.status(200).send('OK'))
@@ -21,7 +28,7 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 
 async function handleEvent(event) {
   if (event.type === 'message') {
-    // 📷 画像が送られてきたとき
+    // 画像が送られてきた場合
     if (event.message.type === 'image') {
       const messageId = event.message.id;
       const stream = await client.getMessageContent(messageId);
@@ -32,29 +39,29 @@ async function handleEvent(event) {
       }
       const buffer = Buffer.concat(chunks);
 
-      // 📄 OCR処理開始！
-      const formData = new URLSearchParams();
-      formData.append('apikey', 'YOUR_OCR_API_KEY'); // ←★ここに自分のAPIキー入れてね！
-      formData.append('language', 'jpn');
-      formData.append('isOverlayRequired', 'false');
-      formData.append('base64Image', `data:image/jpeg;base64,${buffer.toString('base64')}`);
+      // OCR処理
+      try {
+        const [result] = await visionClient.textDetection({ image: { content: buffer } });
+        const detections = result.textAnnotations;
 
-      const ocrRes = await fetch('https://api.ocr.space/parse/image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData
-      });
+        const text = detections.length > 0 ? detections[0].description : null;
 
-      const ocrJson = await ocrRes.json();
-      const resultText = ocrJson.ParsedResults?.[0]?.ParsedText || '文字が読み取れんかったにゃ…';
-
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: `🧾 レシート読み取り結果にゃ：\n\n${resultText}`
-      });
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: text
+            ? `レシート読み取り結果にゃ：\n${text}`
+            : '文字が読み取れんかったにゃ…'
+        });
+      } catch (error) {
+        console.error('OCRエラーにゃ：', error);
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: 'OCR中にエラーが起きたにゃ…'
+        });
+      }
     }
 
-    // 💬 テキストが送られたとき
+    // テキストが送られてきたとき
     if (event.message.type === 'text') {
       const msg = event.message.text;
       return client.replyMessage(event.replyToken, {
@@ -67,6 +74,7 @@ async function handleEvent(event) {
   return Promise.resolve(null);
 }
 
+// 起動
 app.listen(process.env.PORT || 3000, () => {
   console.log('裏メシくん、起動にゃ〜');
 });
