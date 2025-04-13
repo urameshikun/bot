@@ -1,6 +1,6 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
-
+const fetch = require('node-fetch');
 const app = express();
 
 const config = {
@@ -21,26 +21,40 @@ app.post('/webhook', line.middleware(config), (req, res) => {
 
 async function handleEvent(event) {
   if (event.type === 'message') {
-    // 画像が送られてきたとき
+    // 📷 画像が送られてきたとき
     if (event.message.type === 'image') {
       const messageId = event.message.id;
       const stream = await client.getMessageContent(messageId);
 
-      // バッファとして受け取る（画像データ）
       const chunks = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
       const buffer = Buffer.concat(chunks);
 
-      // ここにOCR処理を入れていくで（次のステップ）
+      // 📄 OCR処理開始！
+      const formData = new URLSearchParams();
+      formData.append('apikey', 'YOUR_OCR_API_KEY'); // ←★ここに自分のAPIキー入れてね！
+      formData.append('language', 'jpn');
+      formData.append('isOverlayRequired', 'false');
+      formData.append('base64Image', `data:image/jpeg;base64,${buffer.toString('base64')}`);
+
+      const ocrRes = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData
+      });
+
+      const ocrJson = await ocrRes.json();
+      const resultText = ocrJson.ParsedResults?.[0]?.ParsedText || '文字が読み取れんかったにゃ…';
+
       return client.replyMessage(event.replyToken, {
         type: 'text',
-        text: 'にゃっ！レシート画像を受け取ったで。読み取り準備中や〜'
+        text: `🧾 レシート読み取り結果にゃ：\n\n${resultText}`
       });
     }
 
-    // テキストが送られてきたとき（今まで通り）
+    // 💬 テキストが送られたとき
     if (event.message.type === 'text') {
       const msg = event.message.text;
       return client.replyMessage(event.replyToken, {
@@ -52,3 +66,7 @@ async function handleEvent(event) {
 
   return Promise.resolve(null);
 }
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log('裏メシくん、起動にゃ〜');
+});
